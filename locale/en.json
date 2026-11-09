@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session status colours",
+    "description": "Tints sidebar session rows by live status: red while running, amber while waiting for you, green when a finished session is still unreviewed."
+  }
+}

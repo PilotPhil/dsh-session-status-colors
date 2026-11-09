@@ -1,0 +1,5 @@
+# Bundle patch: one Host row exists only so the bundle can be selected and its
+# Client module served. The Host half registers nothing (see index.js).
+- insert:
+    - id: dsh-session-status-colors
+      name: dsh-session-status-colors
