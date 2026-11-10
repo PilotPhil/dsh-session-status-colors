@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-status-colors",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "private": true,
   "description": "Colour-codes Session rows in the left sidebar by live status: running, waiting for you, or finished and unreviewed.",
@@ -13,6 +13,7 @@
   "files": [
     "index.js",
     "client.js",
+    "overlay.ps1",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",

@@ -4,18 +4,16 @@
 ![DSH](https://img.shields.io/badge/DSH-0.2.2--rc.1-4d6bfe)
 ![dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 左侧工作区的会话条目按**实时状态**着色：一眼看出哪些在跑、哪些在等你、哪些跑完了还没看。
-
-> Colour-codes Session rows in the Harness sidebar by live status — red while running, amber while waiting for you, green when a finished Session is still unreviewed. Pure JavaScript, no build step, no runtime dependencies.
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 左侧工作区的会话条目按**实时状态**着色，并可选地在桌面上浮一个**始终置顶的红绿灯**，让你离开 DSH 窗口也能一眼看到有多少会话在跑、多少在等你。
 
 ```
-┃ 重构登录流程              红  ← 正在跑
-┃ 写周报                    黄  ← 等你审批 / 等你回答
-┃ 迁移数据库脚本            绿  ← 跑完了，你还没点开
-  整理会议纪要                  ← 空闲，保持原样
+侧栏：                       桌面：
+┃ 重构登录流程   红              ┌──────┐
+┃ 写周报         黄              │  ●2  │  红：正在跑
+┃ 迁移数据库     绿              │  ●1  │  黄：等你处理
+  整理会议纪要                    │  ●3  │  绿：跑完没看
+                                └──────┘
 ```
-
-左边那条 3px 色条是主信号，整行的淡色底是辅助；两者都叠在官方行底色之上，选中态、悬停态、拖拽预览都不受影响。
 
 ## 三种状态
 
@@ -28,7 +26,23 @@
 
 判定顺序与官方会话行的状态点完全一致（等待交互 > 运行中 > 完成未查看 > 空闲），所以颜色和行首那枚官方圆点永远说同一件事。
 
-绿色是"还没看过"：你点开那个会话（它成为主视图），或者它重新开始跑，绿色就自动消失。不需要手动清除。
+绿色是"还没看过"：你点开那个会话（它成为主视图），或者它重新开始跑，绿色就自动消失。
+
+## 功能一：侧栏会话行着色
+
+一条 **3px 左侧色条 + 一层淡色底**（底色浓度默认 **45%**），叠在官方行底色之上，选中态、悬停态、拖拽预览都不受影响。
+
+## 功能二：桌面红绿灯
+
+**默认关闭**，在设置页打开。开启后桌面上会出现一个**始终置顶**的圆角矩形，竖排三盏灯：
+
+- 灯里的数字 = 该状态下的会话数量，统计范围是**所有未归档会话**（含折叠分组、其他工作区里的；子代理来源的会话按侧栏惯例排除）；
+- 某个状态是 0 时，那盏灯变暗且**不显示数字**；
+- 面板底色 `rgb(247, 249, 250)`，带一层柔和的边缘阴影；灯色跟随你在设置页里选的那三个颜色；
+- **没有任何交互控件**，只有按住左键可以拖动它到任意位置，位置会记住；
+- DSH 关闭、插件卸载、或从设置页关掉开关时，窗口自动消失。
+
+> 它是**独立的原生窗口进程**（PowerShell + WPF），不是 DSH 界面的一部分，所以能盖在别的应用上面。这也是 DSH 插件拿到系统级置顶窗口的唯一可行路径——DSH 的 Host 是纯 Node 进程，本身没有创建窗口的能力。
 
 ## 安装
 
@@ -54,18 +68,17 @@ dsh plugin --profile <profile> add "github:PilotPhil/dsh-session-status-colors#<
 dsh plugin --profile <profile> add "C:\path\to\dsh-session-status-colors"
 ```
 
-pnpm 会建一个 `link:` 依赖，改源码立刻生效，适合自己改着玩。也可以在「插件」页点「添加」选中这个目录。
-
 ### 装完要做的
 
-如果「插件」页里已经能看到本插件、但会话行没有颜色，**按 F5 刷新页面**（客户端模块需要重新加载一次）。
+**按 F5 刷新页面**——客户端模块要重新加载一次，侧栏颜色和设置页才会出现。
 
 ### 验证装好了
 
 - 本会话正在跑时，它的侧栏条目应该是**红色**；
 - 开一个后台会话让它跑完再切回来，那条应该变**绿色**；
 - 触发一次权限审批，那条应该是**黄色**；
-- 「插件」页 → 本插件详情页，能看到「会话行配色」设置面板。
+- 「插件」页 → 本插件详情页，能看到「会话行配色」设置面板；
+- 打开面板里的**桌面红绿灯**开关，桌面上会出现那个置顶小窗口。
 
 ### 卸载
 
@@ -75,65 +88,81 @@ pnpm 会建一个 `link:` 依赖，改源码立刻生效，适合自己改着玩
 dsh plugin --profile <profile> remove dsh-session-status-colors
 ```
 
-插件只做显示：Host 半是空实现，不注册服务、工具、事件、不写会话日志；客户端的所有注册与样式都挂在插件 effect 上。卸载后会话行立刻回到官方原样，**无需重启、不残留配置**（设置存在浏览器本地，删插件不影响 profile）。
+卸载会同时关掉桌面窗口进程、删掉状态文件、释放回环端口，会话行立刻回到官方原样，**无需重启**。
 
 ## 设置
 
-「插件」页 → 本插件详情页，描述下方就是设置面板：
+「插件」页 → 本插件详情页：
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| 运行中 | 跟随主题（红） | 取色器，改完立刻生效 |
+| 运行中 | 跟随主题（红） | 取色器，改完立刻生效，桌面灯同步 |
 | 等待你处理 | 跟随主题（黄） | 同上 |
 | 完成待查看 | 跟随主题（绿） | 同上 |
 | 底色强度 | **45%** | 0–100%；左侧 3px 色条始终全强度，只调底色浓度 |
-| 恢复默认 | — | 三色回到「跟随主题」，强度回到 45% |
+| 桌面红绿灯 | 关闭 | 开启后浮出置顶窗口 |
+| 恢复默认 | — | 三色回到「跟随主题」，强度回到 45%，桌面开关关闭 |
 
 - 未自定义时颜色走主题状态 token（`--dsw-alias-state-error / warn / success-primary`），浅色与深色主题各自适配；一旦取色就固定为你选的十六进制值。
-- 设置存在浏览器 `localStorage`（键 `dsh-session-status-colors/settings`），**换机器/换浏览器不同步**，也不写进 profile 配置。
-- 底色强度设成 `0` 就只剩左侧色条，想要更克制可以用这个。
+- 设置存在浏览器 `localStorage`（键 `dsh-session-status-colors/settings`），**换机器/换浏览器不同步**。
 
 ## 它是怎么工作的
 
-不碰 DSH 核心，两半都在本包里：
+### 侧栏着色
 
 ```
 ui-session 的每会话快照 ──→ 行尾座位里的空组件 ──→ 行元素 data-dshss ──→ 一段作用域样式
-{running, pendingInteraction, completionUnread}                                   (Client)
+{running, pendingInteraction, completionUnread}
 ```
 
-- **Host**（[`index.js`](index.js)）：只有一个空的 `apply()`。它是 bundle 的挂载点，本身不注册任何东西。
-- **Client**（[`client.js`](client.js)）：往官方座位 `sidebar.session.row.trailing` 注册一个**不可见、不占位**的空组件。组件从自己向上找到 `[data-row-key^="session:"]` 那一行，写入 `data-dshss="running|waiting|done"`；样式只认这个属性，渲染色条与淡底。同时往 `plugins.bundle.config` 注册设置页。
-- 样式文本随设置实时重写，所以改颜色不需要重启或刷新。
+Client 往官方座位 `sidebar.session.row.trailing` 注册一个**不可见、不占位**的空组件，它从自己向上找到 `[data-row-key^="session:"]` 那一行并写入 `data-dshss`；样式只认这个属性。
 
-### 为什么不是"在座位里画一个色块"
+### 桌面红绿灯
 
-官方给会话行开放的座位只有行首 16px 格、行尾图标、悬浮卡三处：行首格在行有状态时会被官方状态点顶掉（正好是我们想标记的时候），行尾图标在鼠标悬停时让位给操作按钮。想整条着色只能给行本身打标记——这就是 `data-dshss` 的来源。
+```
+Client（页面）              Host（DSH 进程）            桌面
+─────────────              ───────────────            ────
+shell.overlay 里的           回环 HTTP 端口              overlay.ps1
+只算数组件           ──→     （127.0.0.1 随机端口） ──→  （WPF 置顶窗口）
+三个计数 + 三个颜色          写 overlay-state.json       每 400ms 读一次
+```
 
-### 失效方式
+为什么这么绕：**计数必须在页面里算**——"完成但未查看"是页面侧的进程内投影，Host 不知道你有没有点开过某个会话；而**窗口只能由独立进程画**，Host 没有窗口能力。于是页面算、Host 中转、原生进程显示。
 
-组件内部全是防御式写法（钩子缺失退回空实现、找不到行元素就跳过）。用户能观察到的失效只有一种：**颜色不显示**，不会白屏、不会顶掉官方状态点、不影响拖拽/悬浮卡/菜单。
+- 端口号由一个同源只读路由 `/dsh-session-status-colors/bridge.json` 告诉页面；
+- 页面每 4 秒补一次心跳，Host 给状态盖时间戳；超过 20 秒没更新，窗口认为 DSH 已经不在了并自行退出，不会留下孤儿窗口；
+- 位置存在 `%LOCALAPPDATA%\dsh-session-status-colors\overlay-position.json`。
 
-## 已知边界
+## 代价与边界
 
-- **搜索态结果行**是另一套行组件，本插件不覆盖，保持官方样式。
+**桌面红绿灯是"有足迹"的功能**（默认关闭，所以你不用它就没有这些代价）：
+
+- 常驻一个 `powershell.exe` + WPF 进程，约 40–90 MB 内存；
+- 需要执行 `powershell.exe -ExecutionPolicy ByPass` 运行本包内的 `overlay.ps1`，部分安全软件可能会提示；
+- 仅 Windows；
+- 压不住独占全屏（游戏、UAC 弹窗）；
+- DSH 退出时窗口一起消失（它不是常驻系统托盘程序）。
+
+**其余已知边界**：
+
+- **搜索态结果行**是另一套行组件，不覆盖。
 - **空白 New Session 行**没有行尾座位，不参与着色。
-- **已归档行**按官方约定不着色（状态只在悬浮卡里）。
-- **只有子代理在跑、父会话自身空闲**时，本插件读到的是父会话快照（`running=false`），可能显示为绿/无色；官方那种情况会显示 ongoing 点。属已知差异。
-- 折叠分组里的行不渲染，自然不着色；官方本身也不做折叠组的聚合提示。
-- 依赖行元素上的 `data-row-key` 属性（它是 DSH 内部的动画行键，不是公开契约）。上游若改掉它，颜色会静默失效——但不会把界面弄坏。
+- **归档判断**依赖会话摘要里是否带归档字段；识别不到时，已归档会话可能仍被计入桌面计数。
+- **只有子代理在跑、父会话自身空闲**时，读到的是父会话快照（`running=false`），可能显示为绿/无色。
+- 依赖行元素上的 `data-row-key` 属性（DSH 内部的动画行键，不是公开契约）。上游若改掉它，颜色会静默失效，但不会把界面弄坏。
 
 ## 兼容性
 
 - 在 DSH `0.2.2-rc.1`（Windows 桌面版）上开发与验证。
-- 依赖的宿主接口：`ui-session` 的 `sessionStatus` 快照、槽位 `sidebar.session.row.trailing` 与 `plugins.bundle.config`、主题 token `--dsw-alias-state-*`。
+- 依赖的宿主接口：`ui-session` 的 `sessionStatus` 快照、槽位 `sidebar.session.row.trailing` / `plugins.bundle.config` / `shell.overlay`、`ctx.webServer.register`、主题 token `--dsw-alias-state-*`。
 
 ## 目录
 
 ```
 dsh-session-status-colors/
-├── index.js            # Host 半：空 apply()，只作为 bundle 挂载点
-├── client.js           # Client 半：行标记、作用域样式、设置面板
+├── index.js            # Host 半：回环通道 + 状态文件 + 窗口进程生命周期
+├── client.js           # Client 半：行标记、作用域样式、设置面板、计数上报
+├── overlay.ps1         # 桌面红绿灯（WPF 置顶窗口）
 ├── cordis.patch.yml    # loader 插入行
 ├── package.json        # 包清单（dsh.bundle.patch、dsh.client）
 ├── icon.svg            # 插件页封面
