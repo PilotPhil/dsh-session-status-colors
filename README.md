@@ -96,14 +96,14 @@ dsh plugin --profile <profile> remove dsh-session-status-colors
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| 运行中 | 跟随主题（红） | 取色器，改完立刻生效，桌面灯同步 |
-| 等待你处理 | 跟随主题（黄） | 同上 |
-| 完成待查看 | 跟随主题（绿） | 同上 |
+| 运行中 | `#E5484D` 红 | 取色器，改完立刻生效，桌面灯同步 |
+| 等待你处理 | `#FFC71F` 黄 | 同上 |
+| 完成待查看 | `#2F9E44` 绿 | 同上 |
 | 底色强度 | **45%** | 0–100%；左侧 3px 色条始终全强度，只调底色浓度 |
 | 桌面红绿灯 | 关闭 | 开启后浮出置顶窗口 |
-| 恢复默认 | — | 三色回到「跟随主题」，强度回到 45%，桌面开关关闭 |
+| 恢复默认 | — | 三色回到上面的默认值，强度回到 45%，桌面开关关闭 |
 
-- 未自定义时颜色走主题状态 token（`--dsw-alias-state-error / warn / success-primary`），浅色与深色主题各自适配；一旦取色就固定为你选的十六进制值。
+- 默认就是字面上的红/黄/绿，**不跟随主题**：DSH 主题里「完成」用的是蓝紫（实测 `#3900D6`），和"跑完待检查＝绿"的预期不符，所以这里给固定色值。
 - 设置存在浏览器 `localStorage`（键 `dsh-session-status-colors/settings`），**换机器/换浏览器不同步**。
 
 ## 它是怎么工作的
@@ -154,7 +154,7 @@ shell.overlay 里的           回环 HTTP 端口              overlay.ps1
 ## 兼容性
 
 - 在 DSH `0.2.2-rc.1`（Windows 桌面版）上开发与验证。
-- 依赖的宿主接口：`ui-session` 的 `sessionStatus` 快照、槽位 `sidebar.session.row.trailing` / `plugins.bundle.config` / `shell.overlay`、`ctx.webServer.register`、主题 token `--dsw-alias-state-*`。
+- 依赖的宿主接口：`ui-session` 的 `sessionStatus` 快照、槽位 `sidebar.session.row.trailing` / `plugins.bundle.config` / `shell.overlay`、`ctx.webServer.register`。
 
 ## 目录
 

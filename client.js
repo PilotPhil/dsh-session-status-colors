@@ -36,11 +36,17 @@ window.__ModuleLoader__.load({
     /** 心跳间隔：超过它 Host 会认为页面已经不在了。 */
     const HEARTBEAT_MS = 4000;
 
-    /** 默认值：红 / 黄 / 绿，底色强度 45%，桌面红绿灯默认关闭。 */
+    /**
+     * 默认值：字面上的红 / 黄 / 绿，底色强度 45%，桌面红绿灯默认关闭。
+     *
+     * 注意这里不用主题的 `--dsw-alias-state-*-primary`：DSH 主题里「完成」用的是
+     * 蓝紫（实测 #3900D6），和「跑完待检查＝绿」的预期不符，所以默认给固定色值。
+     * 主题 token 仍作为运行时兜底保留（见 TOKENS / colorExpression）。
+     */
     const DEFAULTS = Object.freeze({
-      running: '',
-      waiting: '',
-      done: '',
+      running: '#E5484D',
+      waiting: '#FFC71F',
+      done: '#2F9E44',
       strength: 45,
       overlay: false,
     });
@@ -420,6 +426,7 @@ window.__ModuleLoader__.load({
       colorWaiting: '等待你处理',
       colorDone: '完成待查看',
       hintTheme: '跟随主题',
+      hintDefault: '默认',
       hintCustom: '自定义',
       strength: '底色强度',
       strengthHint: '左侧色条保持全强度，只调整底色浓度',
@@ -437,6 +444,7 @@ window.__ModuleLoader__.load({
       colorWaiting: 'Waiting for you',
       colorDone: 'Finished, unreviewed',
       hintTheme: 'Follows theme',
+      hintDefault: 'Default',
       hintCustom: 'Custom',
       strength: 'Row tint',
       strengthHint: 'The left bar stays fully opaque; this changes the tint only',
@@ -483,10 +491,11 @@ window.__ModuleLoader__.load({
 
       const row = (key, label) => {
         const custom = HEX.test(settings[key]) ? settings[key] : '';
+        const isDefault = custom !== '' && custom.toUpperCase() === DEFAULTS[key];
         return h('div', { className: 'dshss-row' },
           h('div', { className: 'dshss-text' },
             h('span', { className: 'dshss-label' }, label),
-            h('span', { className: 'dshss-hint' }, custom === '' ? translate('hintTheme') : translate('hintCustom'))),
+            h('span', { className: 'dshss-hint' }, isDefault ? translate('hintDefault') : translate('hintCustom'))),
           h(ColorControl, {
             name: label,
             value: custom === '' ? FALLBACK_HEX[key] : custom,

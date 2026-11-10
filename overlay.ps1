@@ -38,6 +38,18 @@ function Convert-Brush([string]$hex) {
   }
 }
 
+# 浅色灯用深色数字、深色灯用白色数字，避免黄色灯上的白字看不清。
+function Get-LabelBrush([string]$hex) {
+  try {
+    $color = (Convert-Brush $hex).Color
+    $luminance = (0.2126 * $color.R + 0.7152 * $color.G + 0.0722 * $color.B) / 255
+    if ($luminance -gt 0.62) { return $brushConverter.ConvertFromString('#1B1D22') }
+  } catch {
+    # 算不出来就用白字。
+  }
+  return [System.Windows.Media.Brushes]::White
+}
+
 function Read-OverlayState {
   try {
     if (-not (Test-Path -LiteralPath $StatePath)) { return $null }
@@ -245,6 +257,7 @@ $pollTimer.Add_Tick({
     $ellipses[$index].Fill = Convert-Brush $hex
     if ($count -gt 0) {
       $ellipses[$index].Opacity = 1.0
+      $texts[$index].Foreground = Get-LabelBrush $hex
       $texts[$index].Text = [string]$count
       $texts[$index].Visibility = 'Visible'
     } else {
