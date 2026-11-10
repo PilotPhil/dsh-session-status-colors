@@ -22,18 +22,16 @@ Add-Type -AssemblyName WindowsBase
 
 $PanelColor = '#F7F9FA'
 $PanelBorder = '#E3E7EC'
-$IdleLamp = '#DCE1E7'
-$IdleLampRim = '#CBD2DA'
 $LabelOnLight = '#1B1D22'
 $FallbackColors = @('#E5484D', '#FFC71F', '#2F9E44')
 
-# 紧凑尺寸：灯 22px，内边距 8px，灯间距 3px。
-$LampSize = 22
-$RowGap = 2
-$PaddingX = 8
-$PaddingY = 9
-$ShadowRoom = 13
-$CornerRadius = 13
+# 紧凑尺寸：灯 18px，内边距 5/6px，灯间距 2px。
+$LampSize = 18
+$RowGap = 1
+$PaddingX = 5
+$PaddingY = 6
+$ShadowRoom = 9
+$CornerRadius = 11
 $PollMs = 400
 $StaleMs = 20000
 $MissingLimit = 12
@@ -135,10 +133,10 @@ $frame.BorderThickness = New-Object System.Windows.Thickness(1)
 
 $shadow = New-Object System.Windows.Media.Effects.DropShadowEffect
 $shadow.Color = [System.Windows.Media.Color]::FromRgb(15, 23, 42)
-$shadow.BlurRadius = 14
-$shadow.ShadowDepth = 3
+$shadow.BlurRadius = 11
+$shadow.ShadowDepth = 2
 $shadow.Direction = 270
-$shadow.Opacity = 0.20
+$shadow.Opacity = 0.18
 $frame.Effect = $shadow
 
 $stack = New-Object System.Windows.Controls.StackPanel
@@ -155,14 +153,14 @@ for ($index = 0; $index -lt 3; $index++) {
   $ellipse = New-Object System.Windows.Shapes.Ellipse
   $ellipse.Width = $LampSize
   $ellipse.Height = $LampSize
-  $ellipse.Fill = Convert-Brush $IdleLamp
-  $ellipse.Stroke = Convert-Brush $IdleLampRim
+  $ellipse.Fill = Convert-Brush $FallbackColors[$index]
+  $ellipse.Stroke = Get-RimBrush $FallbackColors[$index]
   $ellipse.StrokeThickness = 1
 
   $text = New-Object System.Windows.Controls.TextBlock
   $text.Text = ''
   $text.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe UI')
-  $text.FontSize = 10.5
+  $text.FontSize = 9
   $text.FontWeight = 'Bold'
   $text.Foreground = [System.Windows.Media.Brushes]::White
   $text.HorizontalAlignment = 'Center'
@@ -281,19 +279,20 @@ $pollTimer.Add_Tick({
       $hex = [string]$colors[$index]
     }
 
+    # 灯的颜色常驻：不随计数变化，始终显示对应的状态色（实色 + 压暗描边）。
+    $ellipses[$index].Fill = Convert-Brush $hex
+    $ellipses[$index].Stroke = Get-RimBrush $hex
+    $ellipses[$index].Opacity = 1.0
+
     if ($count -gt 0) {
-      # 点亮的灯：实色 + 一圈压暗描边，颜色更扎实、不显灰。
-      $ellipses[$index].Fill = Convert-Brush $hex
-      $ellipses[$index].Stroke = Get-RimBrush $hex
-      $ellipses[$index].Opacity = 1.0
+      # 数字按位数挑字号，三位数也塞得进 18px 的灯。
+      $label = [string]$count
+      $texts[$index].FontSize = $(if ($label.Length -ge 3) { 7.5 } elseif ($label.Length -eq 2) { 8.5 } else { 9 })
       $texts[$index].Foreground = Get-LabelBrush $hex
-      $texts[$index].Text = [string]$count
+      $texts[$index].Text = $label
       $texts[$index].Visibility = 'Visible'
     } else {
-      # 0 个会话：中性灰的空灯，不显示数字，也不带任何状态色。
-      $ellipses[$index].Fill = Convert-Brush $IdleLamp
-      $ellipses[$index].Stroke = Convert-Brush $IdleLampRim
-      $ellipses[$index].Opacity = 1.0
+      # 0 个会话：颜色照常，只是不写数字。
       $texts[$index].Visibility = 'Collapsed'
     }
   }
