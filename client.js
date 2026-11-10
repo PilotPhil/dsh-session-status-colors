@@ -142,6 +142,167 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /* -------------------------------------------------------------- 未读状态追踪 */
+
+    /**
+     * 每个会话的「完成但还没真正看过」状态。
+     *
+     * 官方的 `completionUnread` 把「选在主视图」直接当成「已读」：选中的会话在后台
+     * 跑完时既不标记、还会被主动清除，于是"离开电脑等结果"这个最需要提示的场景反而
+     * 没有任何提示。这里自己记一份，用**窗口焦点 + 停留时间**来决定什么时候算看过。
+     *
+     * 条目形状：{ running: boolean, unseen: boolean }
+     */
+    const tracker = new Map();
+    const trackerListeners = new Set();
+
+    /** 要连续「真的看着」多久才算看过，避免切回来的瞬间就把提示抹掉。 */
+    const SEEN_DWELL_MS = 1000;
+
+    /** 当前窗口是否在前台且未被最小化。 */
+    const environment = {
+      focused: typeof document === 'undefined' ? true : document.hasFocus(),
+      visible: typeof document === 'undefined' ? true : document.visibilityState !== 'hidden',
+    };
+
+    /** 当前主视图里的会话、以及是否停在会话视图；由 shell.overlay 的组件上报。 */
+    const view = { mainSessionId: null, conversationVisible: true };
+
+    let seenTimer = null;
+    let seenCandidate = null;
+
+    /** 通知所有订阅者未读状态变了。 */
+    function notifyTrackers() {
+      for (const listener of [...trackerListeners]) {
+        try {
+          listener();
+        } catch {
+          /* 单个订阅者出错不影响其他订阅者。 */
+        }
+      }
+    }
+
+    /** @returns 取消订阅函数。 */
+    function subscribeTrackers(listener) {
+      trackerListeners.add(listener);
+      return () => {
+        trackerListeners.delete(listener);
+      };
+    }
+
+    /** 取消还没到点的「已读」计时。 */
+    function cancelSeenTimer() {
+      if (seenTimer !== null) {
+        window.clearTimeout(seenTimer);
+        seenTimer = null;
+      }
+      seenCandidate = null;
+    }
+
+    /**
+     * 此刻用户是否真的在看着这个会话：窗口在前台、没最小化、停在会话视图、且它就是主视图。
+     * @param {string|null|undefined} sessionId
+     * @returns {boolean}
+     */
+    function isSessionInSight(sessionId) {
+      if (sessionId === null || sessionId === undefined) return false;
+      if (environment.focused !== true || environment.visible !== true) return false;
+      if (view.conversationVisible !== true) return false;
+      return view.mainSessionId === sessionId;
+    }
+
+    /** 条件成立就开始计时；条件一断就取消计时，未读保留。 */
+    function evaluateSeen() {
+      const id = view.mainSessionId;
+      if (id === null || id === undefined) {
+        cancelSeenTimer();
+        return;
+      }
+      const entry = tracker.get(id);
+      if (entry === undefined || entry.unseen !== true || !isSessionInSight(id)) {
+        cancelSeenTimer();
+        return;
+      }
+      if (seenCandidate === id) return;
+      cancelSeenTimer();
+      seenCandidate = id;
+      seenTimer = window.setTimeout(() => {
+        seenTimer = null;
+        seenCandidate = null;
+        const current = tracker.get(id);
+        if (current === undefined || current.unseen !== true) return;
+        if (!isSessionInSight(id)) return;
+        current.unseen = false;
+        notifyTrackers();
+      }, SEEN_DWELL_MS);
+    }
+
+    /**
+     * 把一次状态快照里的「运行中 → 空闲」跳变记成未读；重新开跑则清掉。
+     * 当场看着它跑完的不标记，避免每次完成都闪一下绿。
+     * @param {Map<string, object>|undefined} statuses - `useSessionStatus` 的快照。
+     */
+    function foldStatuses(statuses) {
+      if (statuses === null || statuses === undefined || typeof statuses.forEach !== 'function') return;
+      let changed = false;
+      const present = new Set();
+
+      statuses.forEach((status, sessionId) => {
+        present.add(sessionId);
+        const running = status !== null && status !== undefined && status.running === true;
+        const entry = tracker.get(sessionId);
+        if (entry === undefined) {
+          tracker.set(sessionId, { running, unseen: false });
+          return;
+        }
+        if (entry.running === running) return;
+        entry.running = running;
+        if (running) {
+          if (entry.unseen) {
+            entry.unseen = false;
+            changed = true;
+          }
+          return;
+        }
+        // 人正看着它结束：直接算看过，不产生提示。
+        if (isSessionInSight(sessionId)) return;
+        if (!entry.unseen) {
+          entry.unseen = true;
+          changed = true;
+        }
+      });
+
+      for (const id of [...tracker.keys()]) {
+        if (!present.has(id)) tracker.delete(id);
+      }
+
+      if (changed) notifyTrackers();
+      evaluateSeen();
+    }
+
+    /**
+     * 从会话列表快照里找出当前主视图里的那个会话。
+     * @param {object|undefined} summaries - `useSessions` 的快照。
+     * @returns {string|null}
+     */
+    function mainSessionIdOf(summaries) {
+      if (summaries === null || summaries === undefined) return null;
+      const byId = summaries.byId;
+      if (byId === null || byId === undefined) return null;
+      for (const [id, summary] of Object.entries(byId)) {
+        const retained = summary === null || summary === undefined ? 0 : summary.retainedBy;
+        if (retained !== null && retained !== undefined && (retained.mainView ?? 0) > 0) return id;
+      }
+      return null;
+    }
+
+    /** 订阅未读追踪表；返回一个每次都变的版本号，用来触发重渲染。 */
+    function useTrackerView() {
+      const [revision, setRevision] = React.useState(0);
+      React.useEffect(() => subscribeTrackers(() => setRevision((value) => value + 1)), []);
+      return revision;
+    }
+
     /**
      * 一个状态最终使用的颜色值：自定义优先，否则跟随主题 token。
      * @param {'running'|'waiting'|'done'} key
@@ -254,13 +415,16 @@ window.__ModuleLoader__.load({
     /**
      * 把一个会话的实时快照收敛成四种状态。
      * @param {{ running?: boolean, pendingInteraction?: string, completionUnread?: boolean }|undefined} status
+     * @param {boolean} [unseen] - 本插件自己记的「跑完但还没看过」。
      * @returns {'waiting'|'running'|'done'|''} 空字符串表示不着色。
      */
-    function classify(status) {
-      if (status === undefined || status === null) return '';
-      if (status.pendingInteraction !== undefined && status.pendingInteraction !== null) return 'waiting';
-      if (status.running === true) return 'running';
-      if (status.completionUnread === true) return 'done';
+    function classify(status, unseen = false) {
+      if (status !== undefined && status !== null) {
+        if (status.pendingInteraction !== undefined && status.pendingInteraction !== null) return 'waiting';
+        if (status.running === true) return 'running';
+      }
+      if (unseen) return 'done';
+      if (status !== undefined && status !== null && status.completionUnread === true) return 'done';
       return '';
     }
 
@@ -291,7 +455,8 @@ window.__ModuleLoader__.load({
       if (statuses === null || statuses === undefined || typeof statuses.forEach !== 'function') return counts;
       statuses.forEach((status, sessionId) => {
         if (isHiddenSession(summaries, sessionId)) return;
-        const state = classify(status);
+        const entry = tracker.get(sessionId);
+        const state = classify(status, entry !== undefined && entry.unseen === true);
         if (state === 'running') counts[0] += 1;
         else if (state === 'waiting') counts[1] += 1;
         else if (state === 'done') counts[2] += 1;
@@ -325,6 +490,9 @@ window.__ModuleLoader__.load({
       const useStatus = typeof props.useSessionStatus === 'function' ? props.useSessionStatus : useNoStatus;
       const useSummaries = typeof props.useSessions === 'function' ? props.useSessions : useNoStatus;
 
+      // 自己记的未读状态变了要重渲染。
+      useTrackerView();
+
       const status = useStatus((snapshot) => (
         snapshot !== undefined && snapshot !== null && typeof snapshot.get === 'function'
           ? snapshot.get(sessionId)
@@ -336,10 +504,13 @@ window.__ModuleLoader__.load({
           : undefined
       ));
 
+      const entry = tracker.get(sessionId);
+      const unseen = entry !== undefined && entry.unseen === true;
+
       // 官方不给归档行显示状态点（状态只放悬浮卡），我们也保持原样。
       const archived = summary !== undefined && summary !== null
         && (summary.archived === true || summary.archive === true);
-      const state = archived ? '' : classify(status);
+      const state = archived ? '' : classify(status, unseen);
 
       useLayoutEffect(() => {
         const seat = seatRef.current;
@@ -368,21 +539,44 @@ window.__ModuleLoader__.load({
     /**
      * 桌面红绿灯的数据源：只算数、不渲染任何东西。
      * 挂在 frame 级的 `shell.overlay` 上，所以缩起侧栏、切到别的面板都还在。
-     * @param {{ useSessionStatus?: Function, useSessions?: Function }} props
+     * 它同时是「未读判定」的心跳：把每会话的运行跳变折算成完成未读，
+     * 并上报当前主视图会话与面板状态。
+     * @param {{ useSessionStatus?: Function, useSessions?: Function, usePanelInfo?: Function }} props
      * @returns null（不产生 DOM）。
      */
     function OverlayBridge(props) {
       const useStatus = typeof props.useSessionStatus === 'function' ? props.useSessionStatus : useNoStatus;
       const useSummaries = typeof props.useSessions === 'function' ? props.useSessions : useNoStatus;
+      const usePanel = typeof props.usePanelInfo === 'function' ? props.usePanelInfo : useNoStatus;
 
       const statuses = useStatus((snapshot) => snapshot);
       const summaries = useSummaries((snapshot) => snapshot);
+      const conversationVisible = usePanel((info) => (
+        info === null || info === undefined
+          ? true
+          : info.activePanelId === null || info.activePanelId === 'conversation'
+      ));
 
+      const revision = useTrackerView();
       const [settings, setLocal] = React.useState(getSettings);
       React.useEffect(() => subscribeSettings(() => setLocal(getSettings())), []);
 
+      const mainSessionId = mainSessionIdOf(summaries);
+
+      // 先把"现在看的是哪个会话、在不在会话视图"报给判定器，它决定什么时候算看过。
+      React.useEffect(() => {
+        view.mainSessionId = mainSessionId;
+        view.conversationVisible = typeof props.usePanelInfo === 'function' ? conversationVisible === true : true;
+        evaluateSeen();
+      }, [mainSessionId, conversationVisible]);
+
+      // 把每会话的运行跳变折算成「完成但还没看」。
+      React.useEffect(() => {
+        foldStatuses(statuses);
+      }, [statuses]);
+
       const enabled = settings.overlay === true;
-      const counts = React.useMemo(() => countStates(statuses, summaries), [statuses, summaries]);
+      const counts = React.useMemo(() => countStates(statuses, summaries), [statuses, summaries, revision]);
       const signature = `${counts[0]},${counts[1]},${counts[2]}`;
 
       // 计数、开关、配色任一变化都重发一次；另外每 4 秒补一次心跳，
@@ -637,6 +831,41 @@ window.__ModuleLoader__.load({
           tag.remove();
         };
       }, 'dsh-session-status-colors: settings styles');
+
+      // 窗口焦点/可见性：决定「跑完了到底算不算看过」。
+      ctx.effect(() => {
+        if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+
+        const onFocus = () => {
+          environment.focused = true;
+          evaluateSeen();
+        };
+        const onBlur = () => {
+          environment.focused = false;
+          // 人已经离开：计时作废，未读保留。
+          cancelSeenTimer();
+        };
+        const onVisibility = () => {
+          const visible = document.visibilityState !== 'hidden';
+          if (environment.visible === visible) return;
+          environment.visible = visible;
+          if (visible) evaluateSeen();
+          else cancelSeenTimer();
+        };
+
+        environment.focused = document.hasFocus();
+        environment.visible = document.visibilityState !== 'hidden';
+
+        window.addEventListener('focus', onFocus);
+        window.addEventListener('blur', onBlur);
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => {
+          window.removeEventListener('focus', onFocus);
+          window.removeEventListener('blur', onBlur);
+          document.removeEventListener('visibilitychange', onVisibility);
+          cancelSeenTimer();
+        };
+      }, 'dsh-session-status-colors: focus watcher');
 
       ctx.slots.inject('sidebar.session.row.trailing', () => ctx.slots.register(
         {
