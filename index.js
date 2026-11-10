@@ -20,7 +20,7 @@
  * 插件卸载或页面关闭时，子进程被杀、文件被删、端口被关。
  */
 import { spawn } from 'node:child_process'
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -128,10 +128,35 @@ export function apply(ctx) {
   const positionPath = join(directory, 'overlay-position.json')
 
   /**
-   * 原子地写出状态文件（先写临时文件再改名），窗口不会读到半个 JSON。
-   * @param {object} payload - 已规整的状态。
+   * 杀掉一个进程树；用来收掉自己拉起的窗口，以及上一次 Host 留下的孤儿窗口。
+   * @param {number} pid - 目标进程。
    */
-  const writeState = (payload) => {
+  const killTree = (pid) => {
+    if (typeof pid !== 'number' || pid <= 0) return
+    try {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+    } catch (error) {
+      warn('cannot stop a process', error)
+    }
+  }
+
+  // 插件重载（例如升级）会留下上一次的窗口进程：状态文件里记着它的 pid 就顺手收掉。
+  try {
+    const previous = JSON.parse(readFileSync(statePath, 'utf8'))
+    if (previous !== null && typeof previous === 'object' && typeof previous.overlayPid === 'number') {
+      killTree(previous.overlayPid)
+    }
+  } catch {
+    /* 没有旧状态文件，或者内容不可解析。 */
+  }
+
+  /**
+   * 原子地写出状态文件（先写临时文件再改名），窗口不会读到半个 JSON。
+   * 除页面发来的字段外，还记下当前窗口进程的 pid，供下次启动清理孤儿。
+   */
+  const writeState = () => {
+    if (latest === null) return
+    const payload = { ...latest, overlayPid: child === null ? 0 : child.pid }
     const temp = `${statePath}.tmp`
     writeFileSync(temp, JSON.stringify(payload))
     renameSync(temp, statePath)
@@ -146,10 +171,12 @@ export function apply(ctx) {
     if (child === null) return
     const pid = child.pid
     child = null
+    killTree(pid)
     try {
-      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+      // 记下的 pid 已失效，别让下次启动去杀一个被复用的 pid。
+      writeState()
     } catch (error) {
-      warn('cannot stop the overlay process', error)
+      /* 文件写不进去不影响关窗口。 */
     }
   }
 
@@ -192,8 +219,19 @@ export function apply(ctx) {
     })
     child.on('exit', () => {
       child = null
+      try {
+        writeState()
+      } catch (error) {
+        /* 记不上就等下次覆盖。 */
+      }
       scheduleRestart()
     })
+    // 把新进程的 pid 记进状态文件，供下一次 Host 启动时清理孤儿。
+    try {
+      writeState()
+    } catch (error) {
+      warn('cannot record the overlay pid', error)
+    }
   }
 
   /** 按最新状态决定窗口应有的存在状态。 */
@@ -218,7 +256,7 @@ export function apply(ctx) {
     latest = next
     if (next.enabled) restarts = 0
     try {
-      writeState(next)
+      writeState()
     } catch (error) {
       warn('cannot write the overlay state', error)
     }

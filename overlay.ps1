@@ -4,7 +4,7 @@
   由插件 Host 半拉起：powershell.exe -Sta -File overlay.ps1 <statePath> <positionPath>
 
   - 一个无边框、半透明、始终置顶的圆角矩形，里面竖排三个圆形指示灯；
-  - 每盏灯的数字是该状态下的会话数量，0 时灯变暗且不显示数字；
+  - 每盏灯的数字是该状态下的会话数量，0 时那盏灯变成中性灰、不显示数字；
   - 没有任何交互控件，只用鼠标左键拖动可以移动位置；
   - 每 400ms 读一次 Host 写出的状态文件；启用状态被关掉、或状态文件长时间
     不再更新（说明 DSH 已经不在了）时自行退出，不会留下孤儿窗口。
@@ -21,13 +21,25 @@ Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
 $PanelColor = '#F7F9FA'
-$FallbackColors = @('#E5484D', '#D9A300', '#2F9E44')
-$LampSize = 30
+$PanelBorder = '#E3E7EC'
+$IdleLamp = '#DCE1E7'
+$IdleLampRim = '#CBD2DA'
+$LabelOnLight = '#1B1D22'
+$FallbackColors = @('#E5484D', '#FFC71F', '#2F9E44')
+
+# 紧凑尺寸：灯 22px，内边距 8px，灯间距 3px。
+$LampSize = 22
+$RowGap = 2
+$PaddingX = 8
+$PaddingY = 9
+$ShadowRoom = 13
+$CornerRadius = 13
 $PollMs = 400
 $StaleMs = 20000
 $MissingLimit = 12
 
 $brushConverter = New-Object System.Windows.Media.BrushConverter
+$rimCache = @{}
 
 function Convert-Brush([string]$hex) {
   if ([string]::IsNullOrWhiteSpace($hex)) { $hex = '#9AA0A6' }
@@ -38,12 +50,28 @@ function Convert-Brush([string]$hex) {
   }
 }
 
+# 同一个颜色压暗一点得到的描边色；缓存起来，避免每次轮询都算。
+function Get-RimBrush([string]$hex) {
+  $key = $hex.ToUpperInvariant()
+  if ($rimCache.ContainsKey($key)) { return $rimCache[$key] }
+
+  $color = (Convert-Brush $hex).Color
+  $darker = [System.Windows.Media.Color]::FromRgb(
+    [byte]([math]::Round($color.R * 0.74)),
+    [byte]([math]::Round($color.G * 0.74)),
+    [byte]([math]::Round($color.B * 0.74))
+  )
+  $brush = New-Object System.Windows.Media.SolidColorBrush($darker)
+  $rimCache[$key] = $brush
+  return $brush
+}
+
 # 浅色灯用深色数字、深色灯用白色数字，避免黄色灯上的白字看不清。
 function Get-LabelBrush([string]$hex) {
   try {
     $color = (Convert-Brush $hex).Color
     $luminance = (0.2126 * $color.R + 0.7152 * $color.G + 0.0722 * $color.B) / 255
-    if ($luminance -gt 0.62) { return $brushConverter.ConvertFromString('#1B1D22') }
+    if ($luminance -gt 0.62) { return Convert-Brush $LabelOnLight }
   } catch {
     # 算不出来就用白字。
   }
@@ -98,41 +126,43 @@ $window.Title = 'dsh-session-status-colors'
 
 # 外边距给阴影留出空间：AllowsTransparency 下阴影画在窗口内，不外扩。
 $frame = New-Object System.Windows.Controls.Border
-$frame.CornerRadius = New-Object System.Windows.CornerRadius(20)
-$frame.Padding = New-Object System.Windows.Thickness(14, 15, 14, 15)
-$frame.Margin = New-Object System.Windows.Thickness(20)
+$frame.CornerRadius = New-Object System.Windows.CornerRadius($CornerRadius)
+$frame.Padding = New-Object System.Windows.Thickness($PaddingX, $PaddingY, $PaddingX, $PaddingY)
+$frame.Margin = New-Object System.Windows.Thickness($ShadowRoom)
 $frame.Background = Convert-Brush $PanelColor
+$frame.BorderBrush = Convert-Brush $PanelBorder
+$frame.BorderThickness = New-Object System.Windows.Thickness(1)
 
 $shadow = New-Object System.Windows.Media.Effects.DropShadowEffect
 $shadow.Color = [System.Windows.Media.Color]::FromRgb(15, 23, 42)
-$shadow.BlurRadius = 20
-$shadow.ShadowDepth = 4
+$shadow.BlurRadius = 14
+$shadow.ShadowDepth = 3
 $shadow.Direction = 270
-$shadow.Opacity = 0.22
+$shadow.Opacity = 0.20
 $frame.Effect = $shadow
 
 $stack = New-Object System.Windows.Controls.StackPanel
 
 $ellipses = @()
-$labels = @()
 $texts = @()
 
 for ($index = 0; $index -lt 3; $index++) {
   $row = New-Object System.Windows.Controls.Grid
   $row.Width = $LampSize
   $row.Height = $LampSize
-  $row.Margin = New-Object System.Windows.Thickness(0, 4, 0, 4)
+  $row.Margin = New-Object System.Windows.Thickness(0, $RowGap, 0, $RowGap)
 
   $ellipse = New-Object System.Windows.Shapes.Ellipse
   $ellipse.Width = $LampSize
   $ellipse.Height = $LampSize
-  $ellipse.Fill = Convert-Brush $FallbackColors[$index]
-  $ellipse.Opacity = 0.18
+  $ellipse.Fill = Convert-Brush $IdleLamp
+  $ellipse.Stroke = Convert-Brush $IdleLampRim
+  $ellipse.StrokeThickness = 1
 
   $text = New-Object System.Windows.Controls.TextBlock
   $text.Text = ''
   $text.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe UI')
-  $text.FontSize = 14
+  $text.FontSize = 10.5
   $text.FontWeight = 'Bold'
   $text.Foreground = [System.Windows.Media.Brushes]::White
   $text.HorizontalAlignment = 'Center'
@@ -159,15 +189,12 @@ $virtualTop = [System.Windows.SystemParameters]::VirtualScreenTop
 $virtualRight = $virtualLeft + [System.Windows.SystemParameters]::VirtualScreenWidth
 $virtualBottom = $virtualTop + [System.Windows.SystemParameters]::VirtualScreenHeight
 
-$defaultLeft = $virtualRight - 140
-$defaultTop = $virtualTop + 160
-
 if ($null -ne $saved -and $null -ne $saved.left -and $null -ne $saved.top) {
   $window.Left = [double]$saved.left
   $window.Top = [double]$saved.top
 } else {
-  $window.Left = $defaultLeft
-  $window.Top = $defaultTop
+  $window.Left = $virtualRight - 120
+  $window.Top = $virtualTop + 140
 }
 
 # 换过显示器/分辨率后旧坐标可能落在屏幕外，夹回可见区域。
@@ -254,15 +281,19 @@ $pollTimer.Add_Tick({
       $hex = [string]$colors[$index]
     }
 
-    $ellipses[$index].Fill = Convert-Brush $hex
     if ($count -gt 0) {
+      # 点亮的灯：实色 + 一圈压暗描边，颜色更扎实、不显灰。
+      $ellipses[$index].Fill = Convert-Brush $hex
+      $ellipses[$index].Stroke = Get-RimBrush $hex
       $ellipses[$index].Opacity = 1.0
       $texts[$index].Foreground = Get-LabelBrush $hex
       $texts[$index].Text = [string]$count
       $texts[$index].Visibility = 'Visible'
     } else {
-      # 0 个会话：灯变暗、不显示数字。
-      $ellipses[$index].Opacity = 0.18
+      # 0 个会话：中性灰的空灯，不显示数字，也不带任何状态色。
+      $ellipses[$index].Fill = Convert-Brush $IdleLamp
+      $ellipses[$index].Stroke = Convert-Brush $IdleLampRim
+      $ellipses[$index].Opacity = 1.0
       $texts[$index].Visibility = 'Collapsed'
     }
   }
